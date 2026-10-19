@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+runs/
+wandb/
+videos/
+.DS_Store
