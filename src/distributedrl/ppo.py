@@ -3,16 +3,25 @@ import os
 import random
 import time
 from dataclasses import dataclass
+from typing import Optional
+
+from dotenv import load_dotenv
 
 import gymnasium as gym
+import hydra
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import tyro
+from hydra.core.config_store import ConfigStore
+from omegaconf import OmegaConf
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
+load_dotenv()
+print("Key loaded:", os.getenv("WANDB_API_KEY") is not None)
+
+breakpoint()
 
 @dataclass
 class Args:
@@ -28,8 +37,10 @@ class Args:
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "cleanRL"
     """the wandb's project name"""
-    wandb_entity: str = None
+    wandb_entity: Optional[str] = None
     """the entity (team) of wandb's project"""
+    log_dir: str = "."
+    """root directory for tensorboard logs (runs/), videos/, wandb files and hydra outputs/"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
@@ -66,7 +77,7 @@ class Args:
     """coefficient of the value function"""
     max_grad_norm: float = 0.5
     """the maximum norm for the gradient clipping"""
-    target_kl: float = None
+    target_kl: Optional[float] = None
     """the target KL divergence threshold"""
 
     # to be filled in runtime
@@ -78,11 +89,16 @@ class Args:
     """the number of iterations (computed in runtime)"""
 
 
-def make_env(env_id, idx, capture_video, run_name):
+# register the dataclass as the config schema so hydra validates types and keys
+cs = ConfigStore.instance()
+cs.store(name="base_config", node=Args)
+
+
+def make_env(env_id, idx, capture_video, run_name, log_dir):
     def thunk():
         if capture_video and idx == 0:
             env = gym.make(env_id, render_mode="rgb_array")
-            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
+            env = gym.wrappers.RecordVideo(env, f"{log_dir}/videos/{run_name}")
         else:
             env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
@@ -126,12 +142,14 @@ class Agent(nn.Module):
         return action, probs.log_prob(action), probs.entropy(), self.critic(x)
 
 
-if __name__ == "__main__":
-    args = tyro.cli(Args)
+@hydra.main(version_base=None, config_path="conf", config_name="config")
+def main(cfg: Args) -> None:
+    args: Args = OmegaConf.to_object(cfg)
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
     args.num_iterations = args.total_timesteps // args.batch_size
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    os.makedirs(args.log_dir, exist_ok=True)
     if args.track:
         import wandb
 
@@ -141,10 +159,11 @@ if __name__ == "__main__":
             sync_tensorboard=True,
             config=vars(args),
             name=run_name,
+            dir=args.log_dir,
             monitor_gym=True,
             save_code=True,
         )
-    writer = SummaryWriter(f"runs/{run_name}")
+    writer = SummaryWriter(f"{args.log_dir}/runs/{run_name}")
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
@@ -160,7 +179,7 @@ if __name__ == "__main__":
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, i, args.capture_video, run_name) for i in range(args.num_envs)],
+        [make_env(args.env_id, i, args.capture_video, run_name, args.log_dir) for i in range(args.num_envs)],
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
@@ -310,3 +329,7 @@ if __name__ == "__main__":
 
     envs.close()
     writer.close()
+
+
+if __name__ == "__main__":
+    main()

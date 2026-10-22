@@ -1,0 +1,4 @@
+# @package _global_
+env_id: CartPole-v1
+total_timesteps: 500000
+learning_rate: 2.5e-4

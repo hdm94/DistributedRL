@@ -1,0 +1,17 @@
+# Hydra config. Values here override the defaults in the `Args` dataclass (ppo.py).
+# Pick a group option from the CLI, e.g.:  python ppo.py machine=runpod seed=2
+defaults:
+  - base_config
+  - env: cartpole
+  - machine: local
+  - _self_  # last, so values below win over the groups
+
+wandb_project_name: distributedrl
+wandb_entity: null  # placeholder: set your wandb team/user, or leave null
+seed: 1
+
+hydra:
+  run:
+    dir: ${log_dir}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: ${log_dir}/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}

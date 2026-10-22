@@ -1,0 +1,7 @@
+# @package _global_
+# Requires WANDB_API_KEY in the pod environment.
+num_envs: 32  # placeholder: tune to the pod's CPU core count
+cuda: true
+track: true
+capture_video: false
+log_dir: /workspace/logs  # /workspace is the persistent volume on RunPod

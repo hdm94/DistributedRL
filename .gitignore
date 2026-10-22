@@ -5,3 +5,6 @@ runs/
 wandb/
 videos/
 .DS_Store
+.env
+outputs/
+multirun/
