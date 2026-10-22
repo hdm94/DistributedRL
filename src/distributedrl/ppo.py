@@ -13,9 +13,6 @@ import tyro
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-# test
-
-# another test
 
 @dataclass
 class Args:
