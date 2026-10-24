@@ -1,8 +1,8 @@
 from distributedrl.models.agent import ActorCritic
-from distributedrl.models.backbones import MLP, NatureCNN
+from distributedrl.models.backbones import MLP, ImpalaCNN, NatureCNN
 from distributedrl.models.heads import CategoricalActor, ValueHead
 
-BACKBONES = {"nature_cnn": NatureCNN, "mlp": MLP}
+BACKBONES = {"nature_cnn": NatureCNN, "impala_cnn": ImpalaCNN, "mlp": MLP}
 ACTORS = {"categorical": CategoricalActor}
 CRITICS = {"value": ValueHead}
 

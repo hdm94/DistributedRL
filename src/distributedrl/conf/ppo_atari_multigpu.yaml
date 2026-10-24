@@ -9,6 +9,8 @@ defaults:
 
 wandb_entity: null  # placeholder: set your wandb team/user, or leave null
 reward: custom  # raw | custom (see wrappers/rewards.py)
+game_stats: true  # log game/* per-episode Seaquest stats
+ram_info: false  # true: expose emulator RAM in info and log ram/* (oxygen, depth, ...)
 
 hydra:
   run:

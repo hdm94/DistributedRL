@@ -1,0 +1,5 @@
+# Residual (skip-connection) CNN from IMPALA, shared by the actor and critic heads.
+backbone: {name: impala_cnn, channels: [16, 32, 32], feature_dim: 256}
+actor: {name: categorical}
+critic: {name: value}
+shared_backbone: true

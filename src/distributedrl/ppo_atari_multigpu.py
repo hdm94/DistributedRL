@@ -27,7 +27,9 @@ from distributedrl.wrappers.atari import (  # isort:skip
     MaxAndSkipEnv,
     NoopResetEnv,
 )
+from distributedrl.wrappers.ram import RamInfoEnv, ram_fields_for
 from distributedrl.wrappers.rewards import REWARDS, apply_reward
+from distributedrl.wrappers.stats import SeaquestStatsEnv
 
 gym.register_envs(ale_py)  # registers the ALE/Atari environments with gymnasium
 
@@ -52,6 +54,10 @@ class Args:
     """the entity (team) of wandb's project"""
     log_dir: str = "."
     """root directory for tensorboard logs (runs/), videos/, wandb files and hydra outputs/"""
+    ram_info: bool = False
+    """if toggled, expose the emulator RAM in `info` and log decoded fields (oxygen, depth, ...) as ram/*"""
+    game_stats: bool = True
+    """if toggled, log Seaquest per-episode stats (surfacings, divers collected/delivered, steps) as game/*"""
     vector_env: str = "sync"
     """how the local envs are stepped: "sync" (serially, in-process) or "async" (one subprocess per env)"""
     reward: str = "clip"
@@ -123,7 +129,7 @@ cs = ConfigStore.instance()
 cs.store(name="base_ppo_atari_multigpu", node=Args)
 
 
-def make_env(env_id, idx, capture_video, run_name, log_dir, reward):
+def make_env(env_id, idx, capture_video, run_name, log_dir, reward, ram_info=False, game_stats=False):
     def thunk():
         if capture_video and idx == 0:
             env = gym.make(env_id, render_mode="rgb_array")
@@ -133,10 +139,14 @@ def make_env(env_id, idx, capture_video, run_name, log_dir, reward):
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = NoopResetEnv(env, noop_max=30)
         env = MaxAndSkipEnv(env, skip=4)
+        if ram_info:
+            env = RamInfoEnv(env, ram_fields_for(env_id))
         env = EpisodicLifeEnv(env)
         if "FIRE" in env.unwrapped.get_action_meanings():
             env = FireResetEnv(env)
         env = apply_reward(env, reward)
+        if game_stats and ram_fields_for(env_id):
+            env = SeaquestStatsEnv(env)
         env = gym.wrappers.ResizeObservation(env, (84, 84))
         env = gym.wrappers.GrayscaleObservation(env)
         env = gym.wrappers.FrameStackObservation(env, stack_size=4)
@@ -217,7 +227,7 @@ E.g., `torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
     # async runs each env in its own subprocess (uses multiple CPU cores); sync steps them serially in this process
     vector_env_cls = gym.vector.AsyncVectorEnv if args.vector_env == "async" else gym.vector.SyncVectorEnv
     envs = vector_env_cls(
-        [make_env(args.env_id, i, args.capture_video, run_name, args.log_dir, args.reward) for i in range(args.local_num_envs)],
+        [make_env(args.env_id, i, args.capture_video, run_name, args.log_dir, args.reward, args.ram_info, args.game_stats) for i in range(args.local_num_envs)],
         # SAME_STEP makes the vector env report `final_info`, which the episodic_return logging relies on
         autoreset_mode=gym.vector.AutoresetMode.SAME_STEP,
     )
@@ -236,6 +246,8 @@ E.g., `torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
     values = torch.zeros((args.num_steps, args.local_num_envs)).to(device)
 
     # TRY NOT TO MODIFY: start the game
+    ram_fields = ram_fields_for(args.env_id) if args.ram_info else {}
+    stat_names = SeaquestStatsEnv.stat_names if args.game_stats and ram_fields_for(args.env_id) else ()
     global_step = 0
     start_time = time.time()
     next_obs, _ = envs.reset(seed=args.seed)
@@ -243,6 +255,7 @@ E.g., `torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
     next_done = torch.zeros(args.local_num_envs).to(device)
 
     for iteration in range(1, args.num_iterations + 1):
+        ram_values = {name: [] for name in ram_fields}
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
             frac = 1.0 - (iteration - 1.0) / args.num_iterations
@@ -270,6 +283,9 @@ E.g., `torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
             if not writer:
                 continue
 
+            for name in ram_fields:
+                ram_values[name].append(np.mean(infos[name]))
+
             # gymnasium 1.x vector envs batch final_info as {"episode": {"r": [...], "l": [...]}, "_episode": mask}
             if "final_info" in infos and "episode" in infos["final_info"]:
                 episode = infos["final_info"]["episode"]
@@ -277,6 +293,10 @@ E.g., `torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
                     print(f"global_step={global_step}, episodic_return={episode['r'][i]}")
                     writer.add_scalar("charts/episodic_return", episode["r"][i], global_step)
                     writer.add_scalar("charts/episodic_length", episode["l"][i], global_step)
+                for name in stat_names:
+                    if name in infos["final_info"]:
+                        for i in np.flatnonzero(infos["final_info"][f"_{name}"]):
+                            writer.add_scalar(f"game/{name}", infos["final_info"][name][i], global_step)
 
         print(
             f"local_rank: {local_rank}, action.sum(): {action.sum()}, iteration: {iteration}, actor param sum: {sum(p.sum() for p in agent.actor.parameters())}"
@@ -392,6 +412,8 @@ E.g., `torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
             writer.add_scalar("losses/explained_variance", explained_var, global_step)
             print("SPS:", int(global_step / (time.time() - start_time)))
             writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+            for name, ram_vals in ram_values.items():
+                writer.add_scalar(f"ram/{name}", np.mean(ram_vals), global_step)
 
     envs.close()
     if local_rank == 0:
