@@ -1,6 +1,11 @@
 # @package _global_
-num_envs: 4
+# Smoke-test scale for a laptop: CPU only, short run, logged to a separate wandb project.
 cuda: false
-track: false
-capture_video: false
+local_num_envs: 4
+vector_env: sync
+total_timesteps: 200000  # overrides the game's value, so local runs stay short
+track: true
+wandb_project_name: distributedrl-seaquest-test
 log_dir: .
+backend: gloo
+device_ids: []

@@ -1,7 +1,11 @@
 # @package _global_
-# Requires WANDB_API_KEY in the pod environment.
-num_envs: 32  # placeholder: tune to the pod's CPU core count
+# Requires WANDB_API_KEY (and WANDB_BASE_URL if not on wandb.ai) in the pod environment.
+# Launch with torchrun, e.g. --nproc_per_node=<num GPUs>. total_timesteps comes from the game config.
 cuda: true
+local_num_envs: 12  # envs per process (rank): roughly the vCPUs available per GPU
+vector_env: async  # one subprocess per env, so the CPU cores are actually used
 track: true
-capture_video: false
-log_dir: /workspace/logs  # /workspace is the persistent volume on RunPod
+wandb_project_name: distributedrl-seaquest
+log_dir: /workspace/logs
+backend: nccl
+device_ids: []  # placeholder: e.g. [0, 1]; leave empty to use cuda:<local_rank>
