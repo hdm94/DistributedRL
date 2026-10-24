@@ -4,26 +4,34 @@ import random
 import time
 import warnings
 from dataclasses import dataclass, field
-from typing import List, Literal
+from typing import List, Optional
 
+import ale_py
 import gymnasium as gym
+import hydra
 import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
-import tyro
+from dotenv import load_dotenv
+from hydra.core.config_store import ConfigStore
+from omegaconf import OmegaConf
 from rich.pretty import pprint
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from cleanrl_utils.atari_wrappers import (  # isort:skip
+from distributedrl.atari_wrappers import (  # isort:skip
     ClipRewardEnv,
     EpisodicLifeEnv,
     FireResetEnv,
     MaxAndSkipEnv,
     NoopResetEnv,
 )
+
+gym.register_envs(ale_py)  # registers the ALE/Atari environments with gymnasium
+
+load_dotenv()
 
 
 @dataclass
@@ -40,8 +48,10 @@ class Args:
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "cleanRL"
     """the wandb's project name"""
-    wandb_entity: str = None
+    wandb_entity: Optional[str] = None
     """the entity (team) of wandb's project"""
+    log_dir: str = "."
+    """root directory for tensorboard logs (runs/), videos/, wandb files and hydra outputs/"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
@@ -78,12 +88,12 @@ class Args:
     """coefficient of the value function"""
     max_grad_norm: float = 0.5
     """the maximum norm for the gradient clipping"""
-    target_kl: float = None
+    target_kl: Optional[float] = None
     """the target KL divergence threshold"""
     device_ids: List[int] = field(default_factory=lambda: [])
     """the device ids that subprocess workers will use"""
-    backend: Literal["gloo", "nccl", "mpi"] = "gloo"
-    """the backend for distributed training"""
+    backend: str = "gloo"
+    """the backend for distributed training, one of gloo, nccl, mpi"""
 
     # to be filled in runtime
     local_batch_size: int = 0
@@ -102,11 +112,16 @@ class Args:
     """the number of processes (computed in runtime)"""
 
 
-def make_env(env_id, idx, capture_video, run_name):
+# register the dataclass as the config schema so hydra validates types and keys
+cs = ConfigStore.instance()
+cs.store(name="base_ppo_atari_multigpu", node=Args)
+
+
+def make_env(env_id, idx, capture_video, run_name, log_dir):
     def thunk():
         if capture_video and idx == 0:
             env = gym.make(env_id, render_mode="rgb_array")
-            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
+            env = gym.wrappers.RecordVideo(env, f"{log_dir}/videos/{run_name}")
         else:
             env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
@@ -117,8 +132,8 @@ def make_env(env_id, idx, capture_video, run_name):
             env = FireResetEnv(env)
         env = ClipRewardEnv(env)
         env = gym.wrappers.ResizeObservation(env, (84, 84))
-        env = gym.wrappers.GrayScaleObservation(env)
-        env = gym.wrappers.FrameStack(env, 4)
+        env = gym.wrappers.GrayscaleObservation(env)
+        env = gym.wrappers.FrameStackObservation(env, stack_size=4)
         return env
 
     return thunk
@@ -159,10 +174,13 @@ class Agent(nn.Module):
         return action, probs.log_prob(action), probs.entropy(), self.critic(hidden)
 
 
-if __name__ == "__main__":
+@hydra.main(version_base=None, config_path="conf", config_name="ppo_atari_multigpu")
+def main(cfg: Args) -> None:
     # torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
     # taken from https://pytorch.org/docs/stable/elastic/run.html
-    args = tyro.cli(Args)
+    args: Args = OmegaConf.to_object(cfg)
+    assert args.backend in ("gloo", "nccl", "mpi"), f"unknown backend {args.backend}"
+    os.makedirs(args.log_dir, exist_ok=True)
     local_rank = int(os.getenv("LOCAL_RANK", "0"))
     args.world_size = int(os.getenv("WORLD_SIZE", "1"))
     args.local_batch_size = int(args.local_num_envs * args.num_steps)
@@ -193,10 +211,11 @@ E.g., `torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
                 sync_tensorboard=True,
                 config=vars(args),
                 name=run_name,
+                dir=args.log_dir,
                 monitor_gym=True,
                 save_code=True,
             )
-        writer = SummaryWriter(f"runs/{run_name}")
+        writer = SummaryWriter(f"{args.log_dir}/runs/{run_name}")
         writer.add_text(
             "hyperparameters",
             "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
@@ -223,7 +242,7 @@ E.g., `torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, i, args.capture_video, run_name) for i in range(args.local_num_envs)],
+        [make_env(args.env_id, i, args.capture_video, run_name, args.log_dir) for i in range(args.local_num_envs)],
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
@@ -401,3 +420,7 @@ E.g., `torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
         writer.close()
         if args.track:
             wandb.finish()
+
+
+if __name__ == "__main__":
+    main()

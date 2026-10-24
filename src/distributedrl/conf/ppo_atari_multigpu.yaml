@@ -1,0 +1,22 @@
+# Hydra config for ppo_atari_multigpu.py. Values here override the `Args` defaults.
+# Override from the CLI, e.g.:  torchrun --standalone --nproc_per_node=2 ppo_atari_multigpu.py track=true
+defaults:
+  - base_ppo_atari_multigpu
+  - _self_
+
+track: false
+wandb_project_name: distributedrl
+wandb_entity: null  # placeholder: set your wandb team/user, or leave null
+log_dir: .  # e.g. /workspace/logs on RunPod
+
+env_id: BreakoutNoFrameskip-v4
+total_timesteps: 10000000
+local_num_envs: 8  # envs per process (rank)
+device_ids: []  # e.g. [0, 1]; must match nproc_per_node when set
+backend: gloo  # use nccl for multi-GPU
+
+hydra:
+  run:
+    dir: ${log_dir}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: ${log_dir}/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
