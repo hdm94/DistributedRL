@@ -21,8 +21,6 @@ from torch.utils.tensorboard import SummaryWriter
 load_dotenv()
 print("Key loaded:", os.getenv("WANDB_API_KEY") is not None)
 
-breakpoint()
-
 @dataclass
 class Args:
     exp_name: str = os.path.basename(__file__)[: -len(".py")]
