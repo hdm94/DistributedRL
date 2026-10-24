@@ -19,7 +19,6 @@ from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
 load_dotenv()
-print("Key loaded:", os.getenv("WANDB_API_KEY") is not None)
 
 @dataclass
 class Args:
@@ -42,7 +41,7 @@ class Args:
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
-    # Algorithm specific arguments
+    # Algorithm specific arguments (defaults; overridden by conf/env/*.yaml and conf/machine/*.yaml)
     env_id: str = "CartPole-v1"
     """the id of the environment"""
     total_timesteps: int = 500000
