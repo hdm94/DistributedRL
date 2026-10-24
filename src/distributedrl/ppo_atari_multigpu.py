@@ -52,6 +52,8 @@ class Args:
     """the entity (team) of wandb's project"""
     log_dir: str = "."
     """root directory for tensorboard logs (runs/), videos/, wandb files and hydra outputs/"""
+    vector_env: str = "sync"
+    """how the local envs are stepped: "sync" (serially, in-process) or "async" (one subprocess per env)"""
     reward: str = "clip"
     """reward wrapper applied to the environment, one of the keys of REWARDS in wrappers/rewards.py"""
     model: Dict[str, Any] = field(default_factory=dict)
@@ -149,6 +151,7 @@ def main(cfg: Args) -> None:
     # taken from https://pytorch.org/docs/stable/elastic/run.html
     args: Args = OmegaConf.to_object(cfg)
     assert args.reward in REWARDS, f"unknown reward {args.reward}, choose from {sorted(REWARDS)}"
+    assert args.vector_env in ("sync", "async"), f"unknown vector_env {args.vector_env}"
     assert args.backend in ("gloo", "nccl", "mpi"), f"unknown backend {args.backend}"
     os.makedirs(args.log_dir, exist_ok=True)
     local_rank = int(os.getenv("LOCAL_RANK", "0"))
@@ -211,8 +214,12 @@ E.g., `torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
             device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = gym.vector.SyncVectorEnv(
+    # async runs each env in its own subprocess (uses multiple CPU cores); sync steps them serially in this process
+    vector_env_cls = gym.vector.AsyncVectorEnv if args.vector_env == "async" else gym.vector.SyncVectorEnv
+    envs = vector_env_cls(
         [make_env(args.env_id, i, args.capture_video, run_name, args.log_dir, args.reward) for i in range(args.local_num_envs)],
+        # SAME_STEP makes the vector env report `final_info`, which the episodic_return logging relies on
+        autoreset_mode=gym.vector.AutoresetMode.SAME_STEP,
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
@@ -263,12 +270,13 @@ E.g., `torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
             if not writer:
                 continue
 
-            if "final_info" in infos:
-                for info in infos["final_info"]:
-                    if info and "episode" in info:
-                        print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
-                        writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                        writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+            # gymnasium 1.x vector envs batch final_info as {"episode": {"r": [...], "l": [...]}, "_episode": mask}
+            if "final_info" in infos and "episode" in infos["final_info"]:
+                episode = infos["final_info"]["episode"]
+                for i in np.flatnonzero(infos["final_info"]["_episode"]):
+                    print(f"global_step={global_step}, episodic_return={episode['r'][i]}")
+                    writer.add_scalar("charts/episodic_return", episode["r"][i], global_step)
+                    writer.add_scalar("charts/episodic_length", episode["l"][i], global_step)
 
         print(
             f"local_rank: {local_rank}, action.sum(): {action.sum()}, iteration: {iteration}, actor param sum: {sum(p.sum() for p in agent.actor.parameters())}"

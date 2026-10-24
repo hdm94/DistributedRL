@@ -145,6 +145,8 @@ def main(cfg: Args) -> None:
     # env setup
     envs = gym.vector.SyncVectorEnv(
         [make_env(args.env_id, i, args.capture_video, run_name, args.log_dir) for i in range(args.num_envs)],
+        # SAME_STEP makes the vector env report `final_info`, which the episodic_return logging relies on
+        autoreset_mode=gym.vector.AutoresetMode.SAME_STEP,
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
@@ -191,12 +193,13 @@ def main(cfg: Args) -> None:
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
 
-            if "final_info" in infos:
-                for info in infos["final_info"]:
-                    if info and "episode" in info:
-                        print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
-                        writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                        writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+            # gymnasium 1.x vector envs batch final_info as {"episode": {"r": [...], "l": [...]}, "_episode": mask}
+            if "final_info" in infos and "episode" in infos["final_info"]:
+                episode = infos["final_info"]["episode"]
+                for i in np.flatnonzero(infos["final_info"]["_episode"]):
+                    print(f"global_step={global_step}, episodic_return={episode['r'][i]}")
+                    writer.add_scalar("charts/episodic_return", episode["r"][i], global_step)
+                    writer.add_scalar("charts/episodic_length", episode["l"][i], global_step)
 
         # bootstrap value if not done
         with torch.no_grad():
