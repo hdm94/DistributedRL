@@ -4,7 +4,7 @@ import random
 import time
 import warnings
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import ale_py
 import gymnasium as gym
@@ -18,16 +18,16 @@ from dotenv import load_dotenv
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
 from rich.pretty import pprint
-from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from distributedrl.atari_wrappers import (  # isort:skip
-    ClipRewardEnv,
+from distributedrl.models import build_agent  # isort:skip
+from distributedrl.wrappers.atari import (  # isort:skip
     EpisodicLifeEnv,
     FireResetEnv,
     MaxAndSkipEnv,
     NoopResetEnv,
 )
+from distributedrl.wrappers.rewards import REWARDS, apply_reward
 
 gym.register_envs(ale_py)  # registers the ALE/Atari environments with gymnasium
 
@@ -52,6 +52,10 @@ class Args:
     """the entity (team) of wandb's project"""
     log_dir: str = "."
     """root directory for tensorboard logs (runs/), videos/, wandb files and hydra outputs/"""
+    reward: str = "clip"
+    """reward wrapper applied to the environment, one of the keys of REWARDS in wrappers/rewards.py"""
+    model: Dict[str, Any] = field(default_factory=dict)
+    """network architecture config, see conf/model/*.yaml and models/__init__.py"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
@@ -117,7 +121,7 @@ cs = ConfigStore.instance()
 cs.store(name="base_ppo_atari_multigpu", node=Args)
 
 
-def make_env(env_id, idx, capture_video, run_name, log_dir):
+def make_env(env_id, idx, capture_video, run_name, log_dir, reward):
     def thunk():
         if capture_video and idx == 0:
             env = gym.make(env_id, render_mode="rgb_array")
@@ -130,7 +134,7 @@ def make_env(env_id, idx, capture_video, run_name, log_dir):
         env = EpisodicLifeEnv(env)
         if "FIRE" in env.unwrapped.get_action_meanings():
             env = FireResetEnv(env)
-        env = ClipRewardEnv(env)
+        env = apply_reward(env, reward)
         env = gym.wrappers.ResizeObservation(env, (84, 84))
         env = gym.wrappers.GrayscaleObservation(env)
         env = gym.wrappers.FrameStackObservation(env, stack_size=4)
@@ -139,46 +143,12 @@ def make_env(env_id, idx, capture_video, run_name, log_dir):
     return thunk
 
 
-def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
-    torch.nn.init.orthogonal_(layer.weight, std)
-    torch.nn.init.constant_(layer.bias, bias_const)
-    return layer
-
-
-class Agent(nn.Module):
-    def __init__(self, envs):
-        super().__init__()
-        self.network = nn.Sequential(
-            layer_init(nn.Conv2d(4, 32, 8, stride=4)),
-            nn.ReLU(),
-            layer_init(nn.Conv2d(32, 64, 4, stride=2)),
-            nn.ReLU(),
-            layer_init(nn.Conv2d(64, 64, 3, stride=1)),
-            nn.ReLU(),
-            nn.Flatten(),
-            layer_init(nn.Linear(64 * 7 * 7, 512)),
-            nn.ReLU(),
-        )
-        self.actor = layer_init(nn.Linear(512, envs.single_action_space.n), std=0.01)
-        self.critic = layer_init(nn.Linear(512, 1), std=1)
-
-    def get_value(self, x):
-        return self.critic(self.network(x / 255.0))
-
-    def get_action_and_value(self, x, action=None):
-        hidden = self.network(x / 255.0)
-        logits = self.actor(hidden)
-        probs = Categorical(logits=logits)
-        if action is None:
-            action = probs.sample()
-        return action, probs.log_prob(action), probs.entropy(), self.critic(hidden)
-
-
 @hydra.main(version_base=None, config_path="conf", config_name="ppo_atari_multigpu")
 def main(cfg: Args) -> None:
     # torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
     # taken from https://pytorch.org/docs/stable/elastic/run.html
     args: Args = OmegaConf.to_object(cfg)
+    assert args.reward in REWARDS, f"unknown reward {args.reward}, choose from {sorted(REWARDS)}"
     assert args.backend in ("gloo", "nccl", "mpi"), f"unknown backend {args.backend}"
     os.makedirs(args.log_dir, exist_ok=True)
     local_rank = int(os.getenv("LOCAL_RANK", "0"))
@@ -242,11 +212,11 @@ E.g., `torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, i, args.capture_video, run_name, args.log_dir) for i in range(args.local_num_envs)],
+        [make_env(args.env_id, i, args.capture_video, run_name, args.log_dir, args.reward) for i in range(args.local_num_envs)],
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-    agent = Agent(envs).to(device)
+    agent = build_agent(args.model, envs).to(device)
     torch.manual_seed(args.seed)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
@@ -301,7 +271,7 @@ E.g., `torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
                         writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
 
         print(
-            f"local_rank: {local_rank}, action.sum(): {action.sum()}, iteration: {iteration}, agent.actor.weight.sum(): {agent.actor.weight.sum()}"
+            f"local_rank: {local_rank}, action.sum(): {action.sum()}, iteration: {iteration}, actor param sum: {sum(p.sum() for p in agent.actor.parameters())}"
         )
         # bootstrap value if not done
         with torch.no_grad():

@@ -1,0 +1,5 @@
+# Shared CNN backbone with actor and critic heads (standard Atari PPO).
+backbone: {name: nature_cnn, feature_dim: 512}
+actor: {name: categorical}
+critic: {name: value}
+shared_backbone: true

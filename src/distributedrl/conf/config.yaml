@@ -4,6 +4,7 @@ defaults:
   - base_config
   - env: cartpole
   - machine: local
+  - model: mlp
   - _self_  # last, so values below win over the groups
 
 wandb_project_name: distributedrl

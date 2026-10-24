@@ -2,8 +2,8 @@
 import os
 import random
 import time
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 
@@ -15,8 +15,9 @@ import torch.nn as nn
 import torch.optim as optim
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
-from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
+
+from distributedrl.models import build_agent
 
 load_dotenv()
 
@@ -38,6 +39,8 @@ class Args:
     """the entity (team) of wandb's project"""
     log_dir: str = "."
     """root directory for tensorboard logs (runs/), videos/, wandb files and hydra outputs/"""
+    model: Dict[str, Any] = field(default_factory=dict)
+    """network architecture config, see conf/model/*.yaml and models/__init__.py"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
@@ -104,41 +107,6 @@ def make_env(env_id, idx, capture_video, run_name, log_dir):
     return thunk
 
 
-def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
-    torch.nn.init.orthogonal_(layer.weight, std)
-    torch.nn.init.constant_(layer.bias, bias_const)
-    return layer
-
-
-class Agent(nn.Module):
-    def __init__(self, envs):
-        super().__init__()
-        self.critic = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 1), std=1.0),
-        )
-        self.actor = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.single_observation_space.shape).prod(), 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
-            nn.Tanh(),
-            layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
-        )
-
-    def get_value(self, x):
-        return self.critic(x)
-
-    def get_action_and_value(self, x, action=None):
-        logits = self.actor(x)
-        probs = Categorical(logits=logits)
-        if action is None:
-            action = probs.sample()
-        return action, probs.log_prob(action), probs.entropy(), self.critic(x)
-
-
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: Args) -> None:
     args: Args = OmegaConf.to_object(cfg)
@@ -180,7 +148,7 @@ def main(cfg: Args) -> None:
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-    agent = Agent(envs).to(device)
+    agent = build_agent(args.model, envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # ALGO Logic: Storage setup

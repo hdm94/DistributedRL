@@ -1,0 +1,5 @@
+# Separate MLP for actor and critic (the CleanRL CartPole setup).
+backbone: {name: mlp, hidden_sizes: [64, 64], activation: tanh}
+actor: {name: categorical}
+critic: {name: value}
+shared_backbone: false

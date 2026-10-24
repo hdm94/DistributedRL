@@ -1,5 +1,5 @@
 # Atari preprocessing wrappers (ported from CleanRL's cleanrl_utils/atari_wrappers.py, which follows
-# stable-baselines3), written for the gymnasium 1.x API.
+# stable-baselines3), written for the gymnasium 1.x API. Reward transforms live in rewards.py.
 import gymnasium as gym
 import numpy as np
 
@@ -97,10 +97,3 @@ class MaxAndSkipEnv(gym.Wrapper):
                 break
         max_frame = self._obs_buffer.max(axis=0)
         return max_frame, total_reward, terminated, truncated, info
-
-
-class ClipRewardEnv(gym.RewardWrapper):
-    """Bin the reward to {-1, 0, +1} by its sign."""
-
-    def reward(self, reward):
-        return np.sign(float(reward))

@@ -1,0 +1,3 @@
+# @package _global_
+env_id: SeaquestNoFrameskip-v4
+total_timesteps: 10000000  # placeholder: Seaquest is usually run for longer, tune as needed
