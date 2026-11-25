@@ -1,0 +1,5 @@
+# @package _global_
+# Longer horizon so the oxygen/surfacing payoff isn't discounted away (see the Seaquest plateau at ~1800).
+exp_name: g0.999_l0.98
+gamma: 0.999
+gae_lambda: 0.98

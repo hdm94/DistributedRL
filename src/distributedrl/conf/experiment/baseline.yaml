@@ -1,0 +1,5 @@
+# @package _global_
+# Short horizon (the original Atari PPO values). Select with +experiment=baseline, or sweep several with -m.
+exp_name: baseline_g0.99_l0.95
+gamma: 0.99
+gae_lambda: 0.95
