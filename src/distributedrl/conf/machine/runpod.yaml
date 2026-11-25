@@ -2,7 +2,11 @@
 # Requires WANDB_API_KEY (and WANDB_BASE_URL if not on wandb.ai) in the pod environment.
 # Launch with torchrun, e.g. --nproc_per_node=<num GPUs>. total_timesteps comes from the game config.
 cuda: true
-local_num_envs: 24  # envs per process (rank): roughly the vCPUs available per GPU
+# envs per process (rank). SPS on a 27-vCPU pod: 24 envs 3.2k, 64 4.4k, 128 5.5k (flattening out towards ~6.5k)
+local_num_envs: 128
+# shorter rollouts keep the batch near 4k frames (128 x 32 = 4096), so more envs don't mean fewer updates per second
+num_steps: 32
+num_minibatches: 4  # minibatch of 1024
 vector_env: async  # one subprocess per env, so the CPU cores are actually used
 track: true
 wandb_project_name: distributedrl-seaquest

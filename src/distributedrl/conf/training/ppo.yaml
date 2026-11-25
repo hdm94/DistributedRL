@@ -4,9 +4,9 @@ seed: 1
 torch_deterministic: true  # false is faster on GPU (non-deterministic cuDNN kernels)
 
 learning_rate: 2.5e-4
-anneal_lr: true  # linearly decay the learning rate to 0 over training
+anneal_lr: false  # linearly decay the learning rate to 0 over training
 num_steps: 128  # steps per env per rollout
-gamma: 0.99  # discount factor
+gamma: 0.999  # discount factor
 gae_lambda: 0.95
 num_minibatches: 4
 update_epochs: 4

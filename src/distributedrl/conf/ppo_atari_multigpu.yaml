@@ -4,8 +4,8 @@ defaults:
   - base_ppo_atari_multigpu
   - game: seaquest
   - model: nature_cnn
-  - machine: local
   - training: ppo
+  - machine: local  # after training, so a machine can override rollout shape (e.g. num_steps) for its env count
   - _self_
 
 wandb_entity: null  # placeholder: set your wandb team/user, or leave null
