@@ -55,6 +55,8 @@ class Args:
     """the entity (team) of wandb's project"""
     log_dir: str = "."
     """root directory for tensorboard logs (runs/), videos/, wandb files and hydra outputs/"""
+    wandb_dir: Optional[str] = None
+    """directory for wandb's local run files (defaults to log_dir); must be on a filesystem that allows chmod"""
     ram_info: bool = False
     """if toggled, expose the emulator RAM in `info` and log decoded fields (oxygen, depth, ...) as ram/*"""
     game_stats: bool = True
@@ -230,13 +232,14 @@ E.g., `torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
         if args.track:
             import wandb
 
+            os.makedirs(args.wandb_dir or args.log_dir, exist_ok=True)
             wandb.init(
                 project=args.wandb_project_name,
                 entity=args.wandb_entity,
                 sync_tensorboard=True,
                 config=vars(args),
                 name=run_name,
-                dir=args.log_dir,
+                dir=args.wandb_dir or args.log_dir,
                 monitor_gym=True,
                 save_code=True,
             )

@@ -7,5 +7,7 @@ vector_env: async  # one subprocess per env, so the CPU cores are actually used
 track: true
 wandb_project_name: distributedrl-seaquest
 log_dir: /workspace/logs
+# /workspace (network volume) rejects chmod, which wandb's media copy needs; its files are uploaded anyway
+wandb_dir: /root/wandb
 backend: nccl
 device_ids: []  # placeholder: e.g. [0, 1]; leave empty to use cuda:<local_rank>
