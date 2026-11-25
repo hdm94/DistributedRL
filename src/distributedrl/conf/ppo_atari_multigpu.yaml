@@ -1,10 +1,11 @@
 # Hydra config for ppo_atari_multigpu.py. Values here override the `Args` defaults.
-# Pick a game with game=breakout|seaquest and hardware with machine=local|runpod. Override from the CLI, e.g.:  torchrun --standalone --nproc_per_node=2 ppo_atari_multigpu.py track=true
+# Pick a game with game=breakout|seaquest, hardware with machine=local|runpod, and PPO hyperparameters in training/ppo.yaml. Override from the CLI, e.g.:  torchrun --standalone --nproc_per_node=2 ppo_atari_multigpu.py track=true
 defaults:
   - base_ppo_atari_multigpu
   - game: seaquest
   - model: nature_cnn
   - machine: local
+  - training: ppo
   - _self_
 
 wandb_entity: null  # placeholder: set your wandb team/user, or leave null

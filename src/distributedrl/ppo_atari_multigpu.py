@@ -228,7 +228,7 @@ E.g., `torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
     vector_env_cls = gym.vector.AsyncVectorEnv if args.vector_env == "async" else gym.vector.SyncVectorEnv
     envs = vector_env_cls(
         [make_env(args.env_id, i, args.capture_video, run_name, args.log_dir, args.reward, args.ram_info, args.game_stats) for i in range(args.local_num_envs)],
-        # SAME_STEP makes the vector env report `final_info`, which the episodic_return logging relies on
+        # SAME_STEP1 makes the vector env report `final_info`, which the episodic_return logging relies on
         autoreset_mode=gym.vector.AutoresetMode.SAME_STEP,
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"

@@ -1,0 +1,19 @@
+# @package _global_
+# PPO training hyperparameters (the standard Atari values). Override any of them from the CLI, e.g. learning_rate=1e-4
+seed: 1
+torch_deterministic: true  # false is faster on GPU (non-deterministic cuDNN kernels)
+
+learning_rate: 2.5e-4
+anneal_lr: true  # linearly decay the learning rate to 0 over training
+num_steps: 128  # steps per env per rollout
+gamma: 0.99  # discount factor
+gae_lambda: 0.95
+num_minibatches: 4
+update_epochs: 4
+norm_adv: true
+clip_coef: 0.1  # surrogate clipping
+clip_vloss: true
+ent_coef: 0.01  # entropy bonus
+vf_coef: 0.5  # value loss weight
+max_grad_norm: 0.5
+target_kl: null  # early-stop the update epochs if the KL exceeds this (null = off)
