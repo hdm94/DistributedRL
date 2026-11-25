@@ -20,6 +20,10 @@ class ActorCritic(nn.Module):
     def get_value(self, x):
         return self._critic_value(x, self.backbone(x) if self.critic_backbone is None else None)
 
+    def get_greedy_action(self, x):
+        """The most likely action (argmax of the logits), used for deterministic eval rollouts."""
+        return self.actor(self.backbone(x)).argmax(dim=-1)
+
     def get_action_and_value(self, x, action=None):
         features = self.backbone(x)
         probs = Categorical(logits=self.actor(features))

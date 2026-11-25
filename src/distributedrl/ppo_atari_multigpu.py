@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import ale_py
 import gymnasium as gym
 import hydra
+import imageio
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -66,6 +67,12 @@ class Args:
     """network architecture config, see conf/model/*.yaml and models/__init__.py"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
+    video_interval: int = 0
+    """global steps between eval videos of the greedy policy (saved to videos/ and logged to wandb); 0 disables"""
+    video_max_steps: int = 4500
+    """cap on agent steps per eval video, in case the greedy policy gets stuck"""
+    video_fps: int = 30
+    """frame rate of the eval videos (one frame per agent step, so 15 is real time with frameskip 4)"""
 
     # Algorithm specific arguments
     env_id: str = "BreakoutNoFrameskip-v4"
@@ -153,6 +160,41 @@ def make_env(env_id, idx, capture_video, run_name, log_dir, reward, ram_info=Fal
         return env
 
     return thunk
+
+
+def make_eval_env(env_id):
+    """Single env for eval videos: plays the full game (no EpisodicLifeEnv) and reports the raw, unshaped score."""
+    env = gym.make(env_id, render_mode="rgb_array")
+    env = NoopResetEnv(env, noop_max=30)
+    env = MaxAndSkipEnv(env, skip=4)
+    if "FIRE" in env.unwrapped.get_action_meanings():
+        env = FireResetEnv(env)
+    env = gym.wrappers.ResizeObservation(env, (84, 84))
+    env = gym.wrappers.GrayscaleObservation(env)
+    env = gym.wrappers.FrameStackObservation(env, stack_size=4)
+    return env
+
+
+def record_eval_video(agent, env_id, device, path, seed, max_steps, fps):
+    """Play one game with the greedy policy, save it as an mp4 at `path` and return (score, length)."""
+    env = make_eval_env(env_id)
+    obs, _ = env.reset(seed=seed)
+    frames = [env.render()]
+    score, length = 0.0, 0
+    while length < max_steps:
+        with torch.no_grad():
+            action = agent.get_greedy_action(torch.Tensor(obs).unsqueeze(0).to(device))
+        obs, reward, terminated, truncated, _ = env.step(action.item())
+        frames.append(env.render())
+        score += reward
+        length += 1
+        if terminated or truncated:
+            break
+    env.close()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    # macro_block_size=1 keeps the native 210x160 frame instead of padding it to a multiple of 16
+    imageio.mimwrite(path, frames, fps=fps, macro_block_size=1)
+    return score, length
 
 
 @hydra.main(version_base=None, config_path="conf", config_name="ppo_atari_multigpu")
@@ -249,6 +291,7 @@ E.g., `torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
     ram_fields = ram_fields_for(args.env_id) if args.ram_info else {}
     stat_names = SeaquestStatsEnv.stat_names if args.game_stats and ram_fields_for(args.env_id) else ()
     global_step = 0
+    next_video_step = 0  # the first video (after iteration 1) shows the untrained policy
     start_time = time.time()
     next_obs, _ = envs.reset(seed=args.seed)
     next_obs = torch.Tensor(next_obs).to(device)
@@ -414,6 +457,18 @@ E.g., `torchrun --standalone --nnodes=1 --nproc_per_node=2 ppo_atari_multigpu.py
             writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
             for name, ram_vals in ram_values.items():
                 writer.add_scalar(f"ram/{name}", np.mean(ram_vals), global_step)
+
+            if args.video_interval > 0 and (global_step >= next_video_step or iteration == args.num_iterations):
+                video_path = f"{args.log_dir}/videos/{run_name}/eval_step_{global_step}.mp4"
+                score, length = record_eval_video(
+                    agent, args.env_id, device, video_path, args.seed, args.video_max_steps, args.video_fps
+                )
+                print(f"global_step={global_step}, eval_score={score}, eval_length={length}, saved {video_path}")
+                writer.add_scalar("eval/score", score, global_step)
+                writer.add_scalar("eval/length", length, global_step)
+                if args.track:
+                    wandb.log({"eval/video": wandb.Video(video_path, format="mp4")})
+                next_video_step = (global_step // args.video_interval + 1) * args.video_interval
 
     envs.close()
     if local_rank == 0:
